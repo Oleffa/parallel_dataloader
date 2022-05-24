@@ -8,7 +8,7 @@ from queue import Queue
 import psutil
 
 class RAMLoader(threading.Thread):
-    def __init__(self, ds, ram, files, file_load_list, max_fsize):
+    def __init__(self, ds, ram, files, file_load_list, load_per_file):
         threading.Thread.__init__(self)
         self.ram = ram
         self.ram_size = 0.0
@@ -22,8 +22,7 @@ class RAMLoader(threading.Thread):
         self.data_types = ds['data_types']
         self.data_labels = ds['data_labels']
         self.resize_on_load = ds['resize_function']
-        self.max_fsize = max_fsize
-        self.subset = ds['subset']
+        self.load_per_file = load_per_file
         # Pausing thread
         self.paused = False
         self.pause_cond = threading.Condition(threading.Lock())
@@ -44,7 +43,7 @@ class RAMLoader(threading.Thread):
             if self.data_labels[i] == 'images':
                 # Take care of the fact that sometimes datasets are not sequenced
                 l = resize_on_load(l, self.data_types[i])
-            data.append(l[:int(l.shape[0]/self.subset)].copy())
+            data.append(l[:load_per_file].copy())
         fsize = sum([j.nbytes/1000000.0 for j in data])
         return data, fnames, fsize
 
@@ -97,10 +96,13 @@ class RAMLoader(threading.Thread):
                 self.ram.put(f)
                 self.ram_size = self.get_ram_size()
             time.sleep(0.1)
+
         if self.running == True:
-            print("Warning, RAMLoader ended unintentionally!")
+            if self.verbose:
+                print("Warning, RAMLoader ended unintentionally!")
         else:
-            print("RAMLoader ended as expected!")
+            if self.verbose:
+                print("RAMLoader ended as expected!")
 
 class DataLoader():
     def __init__(self, dataset_params):
@@ -122,8 +124,6 @@ class DataSet():
         self.v = self.ds['verbose']
         self.resize_on_load = self.ds['resize_function']
 
-        if 'subset' not in self.ds:
-            self.ds['subset'] = 1
         # Make list of all files
         self.file_load_list, self.file_lists = self.get_file_list()
 
@@ -141,10 +141,14 @@ class DataSet():
             print('Detected {} files, each with size {}MB.'\
                     .format(len(self.file_lists[0]), fsize))
 
+        load_per_file = self.ds['data_points_per_file']
+        print(self.len)
+        exit()
+
         # Multithreading
         self.ram = Queue()
         self.ram_loader = RAMLoader(self.ds, self.ram, self.file_lists, \
-                self.file_load_list, fsize)
+                self.file_load_list, load_per_file)
         self.ram_loader.start()
 
         self.vram = None
@@ -153,15 +157,14 @@ class DataSet():
         self.process = psutil.Process(os.getpid())
 
     def detect_compression(self, f):
-        for i in f:
-            file_ending = i.split('.')[-1]
-            if file_ending == 'npz':
-                self.ds['compression'] = 'gzip'
-            elif file_ending == 'npy':
-                self.ds['compression'] = 'none'
-            else:
-                print("Error, unknown compression for file {}. I can only read npy and npz files!".format(f))
-                exit()
+        file_ending = f.split('.')[-1]
+        if file_ending == 'npz':
+            self.ds['compression'] = 'gzip'
+        elif file_ending == 'npy':
+            self.ds['compression'] = 'none'
+        else:
+            print("Error, unknown compression for file {}. I can only read npy and npz files!".format(f))
+            exit()
 
     def check_dataset_helper(self, i, d):
         """
@@ -175,30 +178,27 @@ class DataSet():
         # Detect the compression and load the numpy file accordingly
         self.detect_compression(d)
         if self.ds['compression'] == 'none':
-            f = [np.load(j) for j in d]
+            f = np.load(d)
         elif self.ds['compression'] == 'gzip':
-            f = [np.load(j)['a'] for j in d]
-        # f contains a list of len(data_label)
+            f = np.load(d)['a']
 
         if 'features' in self.ds['data_labels']:
             a = self.ds['data_labels'].index('features')
-            if a == i:
+            if a == 0:
                 #If we are taking care of the features, resize them
-                f[a] = self.resize_on_load(f[a], self.ds['data_types'][a])
-        for j, e in enumerate(f):
-            f[j] = e[:int(e.shape[0]/self.ds['subset'])]
-            if 'data_points_per_file' in self.ds:
-                assert self.ds['data_points_per_file'] == f[j].shape[0], \
-                        "Error, not all files have {} datapoints" \
-                        .format(self.ds['data_points_per_file'])
-            else:
-                self.ds['data_points_per_file'] = f[j].shape[0]
+                f = self.resize_on_load(f, self.ds['data_types'][a])
+
+        if 'data_points_per_file' in self.ds:
+            assert self.ds['data_points_per_file'] == f.shape[0], \
+                    "Error, file {} does have different number of datapoints" \
+                    .format(d)
+        else:
+            self.ds['data_points_per_file'] = f.shape[0]
 
         # Sum up file size for this combination of dataset
-        fsize = sum([j.astype(self.ds['data_types'][i]).nbytes/1000000.0 for i, j in enumerate(f)])
+        fsize = f.nbytes/1024.0/1024.0
         if 'a' in locals():
             del a
-        del e
         del f
         """
         Files are first put into a RAM queue and then into VRAM, thus all files have to at least fit into RAM alone.
@@ -220,11 +220,11 @@ class DataSet():
         if self.ds['check_full_dataset']:
             # Check all elements
             for i, f in enumerate(zip(*self.file_lists)):
-                fsize = self.check_dataset_helper(i, f)
+                fsize = self.check_dataset_helper(i, f[0])
         else:
             # Load first element and only check that
             f = list(zip(*self.file_lists))[0]
-            fsize = self.check_dataset_helper(0, f)
+            fsize = self.check_dataset_helper(0, f[0])
         if self.v:
             for key, value in self.ds.items():
                 print("{}: {}".format(key, value))
@@ -248,7 +248,13 @@ class DataSet():
         return self.len
 
     def stop(self):
-        self.ram_loader.stop()
+        try:
+            self.ram_loader.is_alive()
+            self.ram_loader.stop()
+            self.ram_loader.join()
+            del self.ram_loader
+        except:
+            pass
 
     def check_if_fit_vram(self, cur_len):
         """
@@ -275,7 +281,8 @@ class DataSet():
                     self.ram_loader.resume()
                     break
                 for idx, i in enumerate(g['data']):
-                    assert i.shape[0] == self.ds['data_points_per_file'], 'Error: Read a file that does not have the specified data points per load file! {}'.format(g['path'])
+                    print(i.shape, self.ds['data_points_per_file'])
+                    assert i.shape[0] == self.ds['data_points_per_file'], 'Error: Data in AM does not have the specified data points per load file! {}'.format(g['files'][0])
                     g['data'][idx] = torch.from_numpy(i.copy()).to(self.ds['device'])
                 # Continue RAM loading after g is in VRAM
                 self.ram_loader.resume()
