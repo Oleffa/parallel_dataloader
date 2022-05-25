@@ -6,7 +6,7 @@ import os
 import shutil
 import numpy as np
 import h5py
-from src.dataloader import DataLoader
+from dataloader.dataloader import DataLoader
 
 # TODO test with only 1 feature and 3 features
 # Assert that the specified data_type in dataset_params is what comes from the hdf5
