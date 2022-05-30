@@ -11,6 +11,7 @@ from dataloader.dataloader import DataLoader
 # TODO test with only 1 feature and 3 features
 # Assert that the specified data_type in dataset_params is what comes from the hdf5
 # TODO what if dataset does not have the specified format?
+# TODO test with multiple epochs
 
 tmpdir = './tmp/'
 features_dir = tmpdir + 'features/'

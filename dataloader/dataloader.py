@@ -198,6 +198,8 @@ class DataSet(data.Dataset):
         return self.len
 
     def __getitem__(self, idx):
+        if idx == 0:
+            self.cache_idx = 0
         if self.cache == None:
             self.cache = self.memory.get()
         elif idx-self.cache_idx >= self.cache['datapoints']:
