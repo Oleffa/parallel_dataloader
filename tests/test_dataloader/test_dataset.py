@@ -6,7 +6,7 @@ import os
 import shutil
 import numpy as np
 import h5py
-from dataloader.dataloader import DataLoader
+from parallel_dataloader.dataloader import DataLoader
 
 tmpdir = './tmp/'
 features_dir = tmpdir + 'features/'
