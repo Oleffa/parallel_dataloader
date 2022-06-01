@@ -159,7 +159,7 @@ class DataSet(data.Dataset):
 
     def get_files(self):
         p = Path(self.dp['data_path'])
-        assert p.is_dir()
+        assert p.is_dir(), "Error, {} is not a directory".format(p)
         # Recursively find all h5 files
         files = sorted(p.glob('**/*.h5'))
         assert len(files) >= 1, 'No hdf5 datasets found in {}!'.format(p)
