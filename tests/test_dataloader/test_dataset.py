@@ -8,16 +8,44 @@ import numpy as np
 import h5py
 from dataloader.dataloader import DataLoader
 
-# TODO test with only 1 feature and 3 features
-# Assert that the specified data_type in dataset_params is what comes from the hdf5
-# TODO what if dataset does not have the specified format?
-# TODO test with multiple epochs
-
 tmpdir = './tmp/'
 features_dir = tmpdir + 'features/'
 
+def get_dataset_1features(dataset_size, files=1, sequence_size=2, feature_dims=[1], \
+        subset=0, memory=100, differently_sized=False, device='cpu', shuffle=False, \
+        dtype=float):
+    # Create tempdir
+    shutil.rmtree(tmpdir, ignore_errors=True)
+    os.mkdir(tmpdir)
+    os.mkdir(features_dir)
+    # Create some fake data
+    fake_data_features = np.zeros(tuple([dataset_size, sequence_size] + feature_dims), dtype=float)
+    with h5py.File(features_dir + 'data.h5', 'w') as f:
+        f.create_dataset('/data/features/0', data=fake_data_features)
+    if files > 1:
+        for i in range(1,files,1):
+            with h5py.File(features_dir + 'data.h5', 'a') as f:
+                f.create_dataset(f'/data/features/{i}', data=fake_data_features)
+    del fake_data_features
+
+    dataset_params = {'memory' : memory,
+        'data_path' : features_dir,
+        'data_labels' : ['features'],
+        'data_types' : [dtype],
+        'data_shapes' : [(tuple([sequence_size]+feature_dims))],
+        'batch_size' : 32,
+        'subset' : subset,
+        'shuffle' : shuffle,
+        'device' : device,
+        'verbose' : False,
+        }
+
+    loader, dataset = DataLoader(dataset_params).get_loader()
+    return loader, dataset, dataset_params
+
 def get_dataset_features(dataset_size, files=1, sequence_size=2, feature_dims=[1], \
-        subset=0, memory=100, differently_sized=False, device='cpu', shuffle=False):
+        subset=0, memory=100, differently_sized=False, device='cpu', shuffle=False, \
+        dtype=float):
     # Create tempdir
     shutil.rmtree(tmpdir, ignore_errors=True)
     os.mkdir(tmpdir)
@@ -68,6 +96,18 @@ def test_1D():
     time.sleep(0.2)
     assert dataset.memory_loader.is_alive() == False
 
+def test_1D_different_dtype():
+    dataset_size = 100
+    feature_dims = [1]
+    seq_size = 2
+    loader, dataset, dp = get_dataset_features(dataset_size=dataset_size, \
+            sequence_size=seq_size, feature_dims=feature_dims, subset=0, dtype=np.float16)
+    for i, data in enumerate(loader, 0):
+        pass
+    dataset.memory_loader.stop()
+    time.sleep(0.2)
+    assert dataset.memory_loader.is_alive() == False
+
 def test_1D_multiple_files():
     files = 2
     dataset_size = 100
@@ -83,6 +123,37 @@ def test_1D_multiple_files():
     time.sleep(0.2)
     assert dataset.memory_loader.is_alive() == False
 
+def test_1D_multiple_files_only1feature():
+    files = 2
+    dataset_size = 100
+    feature_dims = [1]
+    seq_size = 2
+    loader, dataset, dp = get_dataset_1features(dataset_size=dataset_size, \
+            sequence_size=seq_size, feature_dims=feature_dims, files=2, subset=0)
+    for i, data in enumerate(loader, 0):
+        assert 'labels' not in data, "Error, found unexpected data label"
+    dataset.memory_loader.stop()
+    time.sleep(0.2)
+    assert dataset.memory_loader.is_alive() == False
+
+def test_1D_multiple_files_multiple_epochs():
+    files = 2
+    dataset_size = 100
+    feature_dims = [1]
+    seq_size = 2
+    loader, dataset, dp = get_dataset_features(dataset_size=dataset_size, \
+            sequence_size=seq_size, feature_dims=feature_dims, files=2, subset=0)
+    assert dataset.__len__() == files*dataset_size
+    for e in range(5):
+        amount_of_data = 0
+        for i, data in enumerate(loader, 0):
+            assert data['features'].shape == (tuple([dp['batch_size'], seq_size] + feature_dims)) or \
+                data['features'].shape == (tuple([int(dataset.__len__()%dp['batch_size']), seq_size] + feature_dims))
+            amount_of_data += data['features'].shape[0]
+        assert amount_of_data == len(dataset)
+    dataset.memory_loader.stop()
+    time.sleep(0.2)
+    assert dataset.memory_loader.is_alive() == False
 
 def test_1D_multiple_files_gpu():
     files = 2
@@ -247,7 +318,6 @@ def test_large_vram_fit():
 
     assert dataset.memory_loader.is_alive() == False
 
-"""
 def test_large_vram_fit_shuffled():
     dataset_size = 5000
     feature_dims = [100]
@@ -289,4 +359,3 @@ def test_1D_multiple_files_shuffling():
     while dataset.memory_loader.is_alive():
         time.sleep(0.1)
     assert dataset.memory_loader.is_alive() == False
-"""

@@ -66,7 +66,11 @@ class MemoryLoader(threading.Thread):
                             if self.shuffle:
                                 for i in d:
                                     np.random.shuffle(i)
-                            d = torch.from_numpy(d).to(self.device)
+                            a = d.astype(self.data_info[dl][load_idx]['data_type'])
+                            assert a.dtype == self.data_info[dl][load_idx]['data_type'], \
+                                    "Error, loaded file was not converted to dtype specified" \
+                                    + "in dataset_params['data_type']"
+                            d = torch.from_numpy(d.astype(self.data_info[dl][load_idx]['data_type'])).to(self.device)
                             return d, self.data_info[dl][load_idx]['fsize']
 
     def run(self):
@@ -185,11 +189,12 @@ class DataSet(data.Dataset):
 
                             fsize = np.array(ds[:self.len]).nbytes/1024.0/1024.0
                             self.dataset_size += fsize
+                            data_type = self.dp['data_types'][self.dp['data_labels'].index(data_label)]
                             self.data_info[data_label].append({
                                 'data_path':p, 
                                 'data_label': data_label,
                                 'data_name': data_name,
-                                'dtype': np.array(ds).dtype,
+                                'data_type': data_type,
                                 'shape': np.array(ds)[:self.len].shape, 
                                 'fsize': fsize,
                                 })
