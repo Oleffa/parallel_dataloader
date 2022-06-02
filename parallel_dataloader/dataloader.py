@@ -53,9 +53,18 @@ class MemoryLoader(threading.Thread):
 
     def stop(self):
         self.running = False
+    def reshape(self, d, r):
+        import cv2
+        out_shape = tuple(list(d.shape)[:-len(r)] + r)
+        tmp = np.zeros(out_shape).astype(d.dtype)
+        for idx_j, j in enumerate(d):
+            for idx_k, k in enumerate(j):
+                d = cv2.resize(src=k, dsize=(r[0], r[1]), interpolation=cv2.INTER_LINEAR)
+        return tmp
 
     def load_file(self, dl, load_idx):
         data_name_target = self.data_info[dl][load_idx]['data_name']
+        r = self.data_info[dl][load_idx]['reshape']
         with h5py.File(self.data_info[dl][load_idx]['data_path']) as f:
             for gname, group in f.items():
                 for data_label, group2 in group.items():
@@ -70,7 +79,10 @@ class MemoryLoader(threading.Thread):
                             assert a.dtype == self.data_info[dl][load_idx]['data_type'], \
                                     "Error, loaded file was not converted to dtype specified" \
                                     + "in dataset_params['data_type']"
-                            d = torch.from_numpy(d.astype(self.data_info[dl][load_idx]['data_type'])).to(self.device)
+                            d = d.astype(self.data_info[dl][load_idx]['data_type'])
+                            if tuple(r) != d.shape[-len(r):]:
+                                d = self.reshape(d, r)
+                            d = torch.from_numpy(d).to(self.device)
                             return d, self.data_info[dl][load_idx]['fsize']
 
     def run(self):
@@ -119,6 +131,8 @@ class DataSet(data.Dataset):
         assert len(self.dp['data_labels']) == len(self.dp['data_shapes']), \
                 "Error, length of data_labels != data_shapes"
         assert len(self.dp['data_types']) == len(self.dp['data_shapes']), \
+                "Error, length of data_types != data_shapes"
+        assert len(self.dp['data_labels']) == len(self.dp['reshape']), \
                 "Error, length of data_types != data_shapes"
 
         # Get basic info about the dataset from get_files
@@ -198,12 +212,16 @@ class DataSet(data.Dataset):
                             fsize = np.array(ds[:self.len]).nbytes/1024.0/1024.0
                             self.dataset_size += fsize
                             data_type = self.dp['data_types'][self.dp['data_labels'].index(data_label)]
+                            r = self.dp['reshape'][self.dp['data_labels'].index(data_label)]
+                            if r != list(np.array(ds).shape)[2:]:
+                                assert len(r) == 2 or len(r) == 3, "Error, cant reshape 1D features!"
                             self.data_info[data_label].append({
                                 'data_path':p, 
                                 'data_label': data_label,
                                 'data_name': data_name,
                                 'data_type': data_type,
-                                'shape': np.array(ds)[:self.len].shape, 
+                                'orig_shape': np.array(ds)[:self.len].shape, 
+                                'reshape': r,
                                 'fsize': fsize,
                                 })
 

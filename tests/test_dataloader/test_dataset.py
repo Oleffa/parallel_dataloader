@@ -13,7 +13,7 @@ features_dir = tmpdir + 'features/'
 
 def get_dataset_1features(dataset_size, files=1, sequence_size=2, feature_dims=[1], \
         subset=0, memory=100, differently_sized=False, device='cpu', shuffle=False, \
-        dtype=float):
+        dtype=float, reshape=None):
     # Create tempdir
     shutil.rmtree(tmpdir, ignore_errors=True)
     os.mkdir(tmpdir)
@@ -28,6 +28,10 @@ def get_dataset_1features(dataset_size, files=1, sequence_size=2, feature_dims=[
                 f.create_dataset(f'/data/features/{i}', data=fake_data_features)
     del fake_data_features
 
+    r = [feature_dims]
+    if reshape is not None:
+        r = reshape
+
     dataset_params = {'memory' : memory,
         'data_path' : features_dir,
         'data_labels' : ['features'],
@@ -38,6 +42,7 @@ def get_dataset_1features(dataset_size, files=1, sequence_size=2, feature_dims=[
         'shuffle' : shuffle,
         'device' : device,
         'verbose' : False,
+        'reshape' : r,
         }
 
     loader, dataset = DataLoader(dataset_params).get_loader()
@@ -67,8 +72,9 @@ def get_dataset_features(dataset_size, files=1, sequence_size=2, feature_dims=[1
     del fake_data_labels
     del fake_data_features
 
-    if None is reshape:
-        reshape = feature_dims
+    r = [feature_dims, [1]]
+    if reshape is not None:
+        r = reshape
 
     data_labels = ['features', 'labels']
     if break_label:
@@ -78,12 +84,13 @@ def get_dataset_features(dataset_size, files=1, sequence_size=2, feature_dims=[1
         'data_path' : features_dir,
         'data_labels' : data_labels,
         'data_types' : [float, np.uint8],
-        'data_shapes' : [(tuple([sequence_size]+reshape)), (sequence_size, 1)],
+        'data_shapes' : [(tuple([sequence_size]+feature_dims)), (sequence_size, 1)],
         'batch_size' : 32,
         'subset' : subset,
         'shuffle' : shuffle,
         'device' : device,
         'verbose' : False,
+        'reshape' : r,
         }
 
     loader, dataset = DataLoader(dataset_params).get_loader()
@@ -102,6 +109,22 @@ def test_1D():
     dataset.memory_loader.stop()
     time.sleep(0.2)
     assert dataset.memory_loader.is_alive() == False
+
+def test_1D_reshape():
+    dataset_size = 100
+    feature_dims = [5]
+    reshape = [[3], [1]]
+    seq_size = 2
+    with pytest.raises(AssertionError, match='Error, cant reshape 1D features!'):
+        loader, dataset, dp = get_dataset_features(dataset_size=dataset_size, \
+                sequence_size=seq_size, feature_dims=feature_dims, subset=0, \
+                reshape=reshape)
+        for i, data in enumerate(loader, 0):
+            assert (np.array(data['features'].shape) == [32, 2, 3]).any()
+            break
+        dataset.memory_loader.stop()
+        time.sleep(0.5)
+        assert dataset.memory_loader.is_alive() == False
 
 def test_1D_broken_data_labels():
     dataset_size = 100
@@ -252,6 +275,21 @@ def test_2D():
     time.sleep(0.2)
     assert dataset.memory_loader.is_alive() == False
 
+def test_2D_reshape():
+    dataset_size = 100
+    feature_dims = [10, 10]
+    reshape = [[5, 5], [1]]
+    seq_size = 2
+    loader, dataset, dp = get_dataset_features(dataset_size=dataset_size, \
+            sequence_size=seq_size, feature_dims=feature_dims, subset=0, \
+            reshape=reshape)
+    for i, data in enumerate(loader, 0):
+        assert (np.array(data['features'].shape) == [32, 2, 5, 5]).any()
+        break
+    dataset.memory_loader.stop()
+    time.sleep(0.2)
+    assert dataset.memory_loader.is_alive() == False
+
 def test_3D():
     dataset_size = 100
     feature_dims = [10, 10, 3]
@@ -261,6 +299,21 @@ def test_3D():
     for i, data in enumerate(loader, 0):
         assert data['features'].shape == (tuple([dp['batch_size'], seq_size] + feature_dims)) or \
             data['features'].shape == (tuple([int(dataset.__len__()%dp['batch_size']), seq_size] + feature_dims))
+    dataset.memory_loader.stop()
+    time.sleep(0.2)
+    assert dataset.memory_loader.is_alive() == False
+
+def test_3D_reshape():
+    dataset_size = 100
+    feature_dims = [10, 10, 3]
+    reshape = [[5,5,3], [1]]
+    seq_size = 2
+    loader, dataset, dp = get_dataset_features(dataset_size=dataset_size, \
+            sequence_size=seq_size, feature_dims=feature_dims, subset=0, \
+            reshape=reshape)
+    for i, data in enumerate(loader, 0):
+        assert (np.array(data['features'].shape) == [32, 2, 5, 5, 3]).any()
+        break
     dataset.memory_loader.stop()
     time.sleep(0.2)
     assert dataset.memory_loader.is_alive() == False
