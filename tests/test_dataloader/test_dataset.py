@@ -45,7 +45,7 @@ def get_dataset_1features(dataset_size, files=1, sequence_size=2, feature_dims=[
 
 def get_dataset_features(dataset_size, files=1, sequence_size=2, feature_dims=[1], \
         subset=0, memory=100, differently_sized=False, device='cpu', shuffle=False, \
-        dtype=float):
+        dtype=float, reshape=None, break_label=False):
     # Create tempdir
     shutil.rmtree(tmpdir, ignore_errors=True)
     os.mkdir(tmpdir)
@@ -67,11 +67,18 @@ def get_dataset_features(dataset_size, files=1, sequence_size=2, feature_dims=[1
     del fake_data_labels
     del fake_data_features
 
+    if None is reshape:
+        reshape = feature_dims
+
+    data_labels = ['features', 'labels']
+    if break_label:
+        data_labels = ['features' , 'img']
+
     dataset_params = {'memory' : memory,
         'data_path' : features_dir,
-        'data_labels' : ['features', 'labels'],
+        'data_labels' : data_labels,
         'data_types' : [float, np.uint8],
-        'data_shapes' : [(tuple([sequence_size]+feature_dims)), (sequence_size, 1)],
+        'data_shapes' : [(tuple([sequence_size]+reshape)), (sequence_size, 1)],
         'batch_size' : 32,
         'subset' : subset,
         'shuffle' : shuffle,
@@ -95,6 +102,19 @@ def test_1D():
     dataset.memory_loader.stop()
     time.sleep(0.2)
     assert dataset.memory_loader.is_alive() == False
+
+def test_1D_broken_data_labels():
+    dataset_size = 100
+    feature_dims = [1]
+    seq_size = 2
+    with pytest.raises(AssertionError, match='Error, passed data_labels that dont exist!'):
+        loader, dataset, dp = get_dataset_features(dataset_size=dataset_size, \
+                sequence_size=seq_size, feature_dims=feature_dims, subset=0, break_label=True)
+        for i, data in enumerate(loader, 0):
+            pass
+        dataset.memory_loader.stop()
+        time.sleep(0.2)
+        assert dataset.memory_loader.is_alive() == False
 
 def test_1D_different_dtype():
     dataset_size = 100

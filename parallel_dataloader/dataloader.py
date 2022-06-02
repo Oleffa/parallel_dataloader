@@ -114,6 +114,13 @@ class DataSet(data.Dataset):
         self.dp = dataset_params
         self.v = self.dp['verbose']
 
+        assert len(self.dp['data_labels']) == len(self.dp['data_types']), \
+                "Error, length of data_labels != data_types"
+        assert len(self.dp['data_labels']) == len(self.dp['data_shapes']), \
+                "Error, length of data_labels != data_shapes"
+        assert len(self.dp['data_types']) == len(self.dp['data_shapes']), \
+                "Error, length of data_types != data_shapes"
+
         # Get basic info about the dataset from get_files
         self.data_info = dict()
         for dl in self.dp['data_labels']:
@@ -168,6 +175,7 @@ class DataSet(data.Dataset):
             with h5py.File(p) as f:
                 for gname, group in f.items():
                     for data_label, group2 in group.items():
+                        assert data_label in self.dp['data_labels'], "Error, passed data_labels that dont exist!"
                         for data_name, ds in group2.items():
                             # Make sure all datasets have the same size
                             if shapes == None:
