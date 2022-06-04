@@ -20,6 +20,18 @@ class DataLoader():
     def get_loader(self):
         return self.loader, self.dataset
 
+def reshape(d, r):
+    """Resize a 2D or 3D feature with opencv
+    """
+    import cv2
+    out_shape = tuple(list(d.shape)[:-len(r)] + r)
+    tmp = np.zeros(out_shape).astype(d.dtype)
+    for idx_j, j in enumerate(d):
+        for idx_k, k in enumerate(j):
+            tmp[idx_j, idx_k] = cv2.resize(src=k, dsize=tuple((r[1], r[0])), interpolation=cv2.INTER_LINEAR)
+    return tmp
+
+
 class MemoryLoader(threading.Thread):
     def __init__(self, memory_size, memory, one_file_size, data_info, fits_memory, \
             data_labels, shuffle, device, verbose):
@@ -53,14 +65,6 @@ class MemoryLoader(threading.Thread):
 
     def stop(self):
         self.running = False
-    def reshape(self, d, r):
-        import cv2
-        out_shape = tuple(list(d.shape)[:-len(r)] + r)
-        tmp = np.zeros(out_shape).astype(d.dtype)
-        for idx_j, j in enumerate(d):
-            for idx_k, k in enumerate(j):
-                d = cv2.resize(src=k, dsize=(r[0], r[1]), interpolation=cv2.INTER_LINEAR)
-        return tmp
 
     def load_file(self, dl, load_idx):
         data_name_target = self.data_info[dl][load_idx]['data_name']
@@ -81,7 +85,7 @@ class MemoryLoader(threading.Thread):
                                     + "in dataset_params['data_type']"
                             d = d.astype(self.data_info[dl][load_idx]['data_type'])
                             if tuple(r) != d.shape[-len(r):]:
-                                d = self.reshape(d, r)
+                                d = reshape(d, r)
                             d = torch.from_numpy(d).to(self.device)
                             return d, self.data_info[dl][load_idx]['fsize']
 
@@ -208,10 +212,10 @@ class DataSet(data.Dataset):
                                     self.dataset_files += 1
                             else:
                                 self.len = self.dp['subset']
-
-                            fsize = np.array(ds[:self.len]).nbytes/1024.0/1024.0
-                            self.dataset_size += fsize
                             data_type = self.dp['data_types'][self.dp['data_labels'].index(data_label)]
+                            r = self.dp['reshape'][self.dp['data_labels'].index(data_label)]
+                            fsize = np.zeros(list(ds.shape)[:2] + r, dtype=data_type).nbytes/1024.0/1024.0
+                            self.dataset_size += fsize
                             r = self.dp['reshape'][self.dp['data_labels'].index(data_label)]
                             if r != list(np.array(ds).shape)[2:]:
                                 assert len(r) == 2 or len(r) == 3, "Error, cant reshape 1D features!"
