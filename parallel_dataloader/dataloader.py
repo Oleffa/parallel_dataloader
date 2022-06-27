@@ -10,10 +10,83 @@ import time
 from queue import Queue
 import psutil
 
+class FullLoader():
+    def __init__(self, dataset_params):
+        self.dp = dataset_params
+        self.device = self.dp['device']
+        self.data_info = dict()
+        for dl in self.dp['data_labels']:
+            self.data_info[dl] = []
+
+    def load_file(self, dl, load_idx):
+        data_name_target = self.data_info[dl][load_idx]['data_name']
+        r = self.data_info[dl][load_idx]['reshape']
+        with h5py.File(self.data_info[dl][load_idx]['data_path']) as f:
+            for gname, group in f.items():
+                for data_label, group2 in group.items():
+                    for data_name, ds in group2.items():
+                        if data_label == dl and \
+                                data_name == data_name_target:
+                            d = np.array(ds)
+                            a = d.astype(self.data_info[dl][load_idx]['data_type'])
+                            assert a.dtype == self.data_info[dl][load_idx]['data_type'], \
+                                    "Error, loaded file was not converted to dtype specified" \
+                                    + "in dataset_params['data_type']"
+                            d = d.astype(self.data_info[dl][load_idx]['data_type'])
+                            if tuple(r) != d.shape[-len(r):]:
+                                d = reshape(d, r)
+                            d = torch.from_numpy(d).to(self.device)
+                            return d, self.data_info[dl][load_idx]['fsize']
+
+    def get_data(self, dl):
+        p = Path(self.dp['data_path'])
+        assert p.is_dir(), "Error, {} is not a directory".format(p)
+        # Recursively find all h5 files
+        files = sorted(p.glob('**/*.h5'))
+        assert len(files) >= 1, 'No hdf5 datasets found in {}!'.format(p)
+        shapes = None
+        for p in files:
+            with h5py.File(p) as f:
+                for gname, group in f.items():
+                    for data_label, group2 in group.items():
+                        for data_name, ds in group2.items():
+                            if str(data_label) not in self.dp['data_labels']:
+                                continue
+                            # Make sure all datasets have the same size
+                            if shapes == None:
+                                shapes = np.array(ds).shape
+                            else:
+                                assert shapes[0] == np.array(ds).shape[0], "Error, some parts " \
+                                        + "of the dataset have different amounts of datapoints"
+                            data_type = self.dp['data_types'][self.dp['data_labels'].index(data_label)]
+                            r = self.dp['reshape'][self.dp['data_labels'].index(data_label)]
+                            fsize = np.zeros(list(ds.shape)[:2] + r, dtype=data_type).nbytes/1024.0/1024.0
+                            r = self.dp['reshape'][self.dp['data_labels'].index(data_label)]
+                            if r != list(np.array(ds).shape)[2:]:
+                                assert len(r) == 2 or len(r) == 3, "Error, cant reshape 1D features!"
+                            self.data_info[data_label].append({
+                                'data_path': p, 
+                                'data_label': data_label,
+                                'data_name': data_name,
+                                'data_type': data_type,
+                                'orig_shape': np.array(ds).shape, 
+                                'reshape': r,
+                                'fsize': fsize,
+                                })
+        info = self.data_info[dl]
+        data = []
+        for idx, i in enumerate(info):
+            a = self.load_file(dl, idx)
+            data.append(a[0])
+        data = np.concatenate(data, axis=0)
+        if self.dp['shuffle']:
+            np.random.shuffle(data)
+        return data
+
 class DataLoader():
     def __init__(self, dataset_params):
         self.dp = dataset_params
-        self.dataset= DataSet(self.dp)
+        self.dataset = DataSet(self.dp)
         # shuffle = False: We shuffle data our own way
         self.loader = torch.utils.data.DataLoader(self.dataset, \
                 batch_size=self.dp['batch_size'], shuffle=False)
@@ -47,6 +120,7 @@ class MemoryLoader(threading.Thread):
         self.device = device
         self.v = verbose
 
+        # This load list is used to shuffle the loaded files
         self.load_list = np.arange(0, len(data_info[data_labels[0]]), 1)
         if self.shuffle:
             np.random.shuffle(self.load_list)
@@ -66,7 +140,7 @@ class MemoryLoader(threading.Thread):
     def stop(self):
         self.running = False
 
-    def load_file(self, dl, load_idx):
+    def load_file(self, dl, load_idx, shuffle_list):
         data_name_target = self.data_info[dl][load_idx]['data_name']
         r = self.data_info[dl][load_idx]['reshape']
         with h5py.File(self.data_info[dl][load_idx]['data_path']) as f:
@@ -76,9 +150,9 @@ class MemoryLoader(threading.Thread):
                         if data_label == dl and \
                                 data_name == data_name_target:
                             d = np.array(ds)
+                            # Shuffle the data of an individual data file
                             if self.shuffle:
-                                for i in d:
-                                    np.random.shuffle(i)
+                                d = d[shuffle_list]
                             a = d.astype(self.data_info[dl][load_idx]['data_type'])
                             assert a.dtype == self.data_info[dl][load_idx]['data_type'], \
                                     "Error, loaded file was not converted to dtype specified" \
@@ -108,8 +182,14 @@ class MemoryLoader(threading.Thread):
                 d = dict()
                 sample_size = 0.0 
                 datapoints = 0
+                # Get the number of elements in one data file
+                a = self.data_info[self.data_labels[0]][0]['orig_shape'][0]
+                # Create this shuffle list so all datafiles for a given data label
+                # are shuffled in the same way
+                shuffle_list = np.random.permutation(a)
+
                 for dl in self.data_labels:
-                    d[dl], fsize = self.load_file(dl, self.load_list[self.load_idx])
+                    d[dl], fsize = self.load_file(dl, self.load_list[self.load_idx], shuffle_list)
                     datapoints = d[dl].shape[0]
                     sample_size += fsize
                 d['size'] = sample_size
@@ -137,10 +217,11 @@ class DataSet(data.Dataset):
         assert len(self.dp['data_types']) == len(self.dp['data_shapes']), \
                 "Error, length of data_types != data_shapes"
         assert len(self.dp['data_labels']) == len(self.dp['reshape']), \
-                "Error, length of data_types != data_shapes"
+                "Error, length of data_labels != reshape"
 
         # Get basic info about the dataset from get_files
         self.data_info = dict()
+        self.found_data_labels = []
         for dl in self.dp['data_labels']:
             self.data_info[dl] = []
         self.len = 0
@@ -150,6 +231,7 @@ class DataSet(data.Dataset):
 
         self.one_file_size = 0.0
         for dl in self.dp['data_labels']:
+            assert str(dl) in self.found_data_labels, 'Error, passed data_labels that dont exist!'
             self.one_file_size += self.data_info[dl][0]['fsize']
 
         # Check if the full dataset fits in RAM
@@ -193,8 +275,11 @@ class DataSet(data.Dataset):
             with h5py.File(p) as f:
                 for gname, group in f.items():
                     for data_label, group2 in group.items():
-                        assert data_label in self.dp['data_labels'], "Error, passed data_labels that dont exist!"
                         for data_name, ds in group2.items():
+                            if str(data_label) not in self.found_data_labels:
+                                self.found_data_labels.append(data_label)
+                            if str(data_label) not in self.dp['data_labels']:
+                                continue
                             # Make sure all datasets have the same size
                             if shapes == None:
                                 shapes = np.array(ds).shape
@@ -220,7 +305,7 @@ class DataSet(data.Dataset):
                             if r != list(np.array(ds).shape)[2:]:
                                 assert len(r) == 2 or len(r) == 3, "Error, cant reshape 1D features!"
                             self.data_info[data_label].append({
-                                'data_path':p, 
+                                'data_path': p, 
                                 'data_label': data_label,
                                 'data_name': data_name,
                                 'data_type': data_type,
