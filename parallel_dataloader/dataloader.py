@@ -226,7 +226,6 @@ class DataSet(data.Dataset):
             self.data_info[dl] = []
         self.len = 0
         self.dataset_size = 0.0
-        self.dataset_files = 0
         self.get_files()
 
         self.one_file_size = 0.0
@@ -286,17 +285,11 @@ class DataSet(data.Dataset):
                             else:
                                 assert shapes[0] == np.array(ds).shape[0], "Error, some parts " \
                                         + "of the dataset have different amounts of datapoints"
-                            # Only take a part of the data when subset is specified
-                            assert self.dp['subset'] <= shapes[0] and self.dp['subset'] >= 0, \
-                                    "Error, subset larger than amount of data"
-
+                            
                             # Compute the amount of samples in the dataset
-                            if self.dp['subset'] == 0:
-                                if data_label == self.dp['data_labels'][0]:
-                                    self.len += shapes[0]
-                                    self.dataset_files += 1
-                            else:
-                                self.len = self.dp['subset']
+                            if data_label == self.dp['data_labels'][0]:
+                                self.len += shapes[0]
+
                             data_type = self.dp['data_types'][self.dp['data_labels'].index(data_label)]
                             r = self.dp['reshape'][self.dp['data_labels'].index(data_label)]
                             fsize = np.zeros(list(ds.shape)[:2] + r, dtype=data_type).nbytes/1024.0/1024.0
@@ -313,6 +306,10 @@ class DataSet(data.Dataset):
                                 'reshape': r,
                                 'fsize': fsize,
                                 })
+
+            assert self.dp['subset'] <= self.len, "Error, subset larger than dataset!"
+            if self.dp['subset'] > 0:
+                self.len = self.dp['subset']
 
     def __len__(self):
         return self.len
