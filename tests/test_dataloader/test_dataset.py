@@ -276,15 +276,32 @@ def test_1D_subset():
     dataset.memory_loader.stop()
     time.sleep(0.2)
     assert dataset.memory_loader.is_alive() == False
-
-def test_1D_subset_too_large():
+    
+def test_1D_subset_not_too_large():
+    files = 3
     subset = 101
     dataset_size = 100
     feature_dims = [1]
     seq_size = 2
-    with pytest.raises(AssertionError, match='Error, subset larger than amount of data'):
+    loader, dataset, dp = get_dataset_features(dataset_size=dataset_size, \
+            sequence_size=seq_size, feature_dims=feature_dims, subset=subset, \
+            files=files)
+    for i, data in enumerate(loader, 0):
+        pass
+    dataset.memory_loader.stop()
+    time.sleep(0.2)
+    assert dataset.memory_loader.is_alive() == False
+
+def test_1D_subset_too_large():
+    files = 1
+    subset = 101
+    dataset_size = 100
+    feature_dims = [1]
+    seq_size = 2
+    with pytest.raises(AssertionError, match='Error, subset larger than dataset!'):
         loader, dataset, dp = get_dataset_features(dataset_size=dataset_size, \
-                sequence_size=seq_size, feature_dims=feature_dims, subset=subset)
+                sequence_size=seq_size, feature_dims=feature_dims, subset=subset, \
+                files=files)
         for i, data in enumerate(loader, 0):
             pass
         dataset.memory_loader.stop()
