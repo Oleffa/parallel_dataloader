@@ -100,9 +100,16 @@ def reshape(d, r):
     import cv2
     out_shape = tuple(list(d.shape)[:-len(r)] + r)
     tmp = np.zeros(out_shape).astype(d.dtype)
+    if len(r) in [1, 2]:
+        pass
+    elif len(r) == 3:
+        r = r[:2]
+    else:
+        print('Error, cant resize {}D data'.format(len(r)))
+
     for idx_j, j in enumerate(d):
         for idx_k, k in enumerate(j):
-            tmp[idx_j, idx_k] = cv2.resize(src=k, dsize=tuple((r[1], r[0])), interpolation=cv2.INTER_LINEAR)
+            tmp[idx_j, idx_k] = cv2.resize(src=k, dsize=tuple(r), interpolation=cv2.INTER_LINEAR)
     return tmp
 
 
@@ -305,7 +312,7 @@ class DataSet(data.Dataset):
                             self.dataset_size += fsize
                             r = self.dp['reshape'][self.dp['data_labels'].index(data_label)]
                             if r != list(np.array(ds).shape)[2:]:
-                                assert len(r) == 2 or len(r) == 3, "Error, cant reshape 1D features!"
+                                assert len(r) == 2 or len(r) == 3 or len(r) == 4, "Error, cant reshape 1D features!"
                             self.data_info[data_label].append({
                                 'data_path': p, 
                                 'data_label': data_label,

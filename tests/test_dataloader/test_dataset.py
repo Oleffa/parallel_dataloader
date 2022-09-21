@@ -529,3 +529,14 @@ def test_full_shuffle():
     features = FullLoader(dp).get_data('features')
     assert (features[0] != [[0],[1]]).any()
     assert (features[10] == [[370],[371]]).any()
+
+def test_full_3D_reshape():
+    files = 2
+    dataset_size = 100
+    feature_dims = [10, 10, 3]
+    reshape= [[5, 5, 3], [1]]
+    seq_size = 2
+    loader, dataset, dp = get_dataset_features(dataset_size=dataset_size, \
+            sequence_size=seq_size, feature_dims=feature_dims, files=2, subset=0, shuffle=False, reshape=reshape)
+    features = FullLoader(dp).get_data('features')
+    assert features.shape == tuple(list((dataset_size*files, seq_size)) + reshape[0])
