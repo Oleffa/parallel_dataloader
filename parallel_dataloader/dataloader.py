@@ -63,7 +63,8 @@ class FullLoader():
                             fsize = np.zeros(list(ds.shape)[:2] + r, dtype=data_type).nbytes/1024.0/1024.0
                             r = self.dp['reshape'][self.dp['data_labels'].index(data_label)]
                             if r != list(np.array(ds).shape)[2:]:
-                                assert len(r) == 2 or len(r) == 3, "Error, cant reshape 1D features!"
+                                assert len(r) == 2 or len(r) == 4, "Error, cant reshape {} features!".\
+                                        format(len(r))
                             self.data_info[data_label].append({
                                 'data_path': p, 
                                 'data_label': data_label,
