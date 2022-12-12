@@ -6,12 +6,12 @@ import os
 import shutil
 import numpy as np
 import h5py
-from parallel_dataloader.dataloader import DataLoader, FullLoader
 
 tmpdir = './tmp/'
 features_dir = tmpdir + 'features/'
 torch.manual_seed(0)
 np.random.seed(0)
+from parallel_dataloader.dataloader import DataLoader, FullLoader
 
 def get_dataset_1features(dataset_size, files=1, sequence_size=2, feature_dims=[1], \
         subset=0, memory=100, differently_sized=False, device='cpu', shuffle=False, \
@@ -51,21 +51,20 @@ def get_dataset_1features(dataset_size, files=1, sequence_size=2, feature_dims=[
 
 def get_dataset_numbered_features(dataset_size, files=1, sequence_size=2, feature_dims=[1], \
         subset=0, memory=100, differently_sized=False, device='cpu', shuffle=False, \
-        dtype=float, reshape=None):
+        dtype=float, reshape=None, return_dataloader=False):
     # Create tempdir
     shutil.rmtree(tmpdir, ignore_errors=True)
     os.mkdir(tmpdir)
     os.mkdir(features_dir)
     # Create some fake data
-    if files > 1:
-        for i in range(0,files,1):
-            a = np.arange(0, dataset_size*sequence_size*np.prod(feature_dims), 1, dtype=float) + \
-                    dataset_size * sequence_size * np.prod(feature_dims) * i
-            fake_data_features = a.reshape(tuple([dataset_size, sequence_size] + feature_dims))
-            with h5py.File(features_dir + 'data.h5', 'a') as f:
-                f.create_dataset(f'/data/features/{i}', data=fake_data_features)
-            with h5py.File(features_dir + 'data.h5', 'a') as f:
-                f.create_dataset(f'/data/labels/{i}', data=fake_data_features)
+    for i in range(0,files,1):
+        a = np.arange(0, dataset_size*sequence_size*np.prod(feature_dims), 1, dtype=float) + \
+                dataset_size * sequence_size * np.prod(feature_dims) * i
+        fake_data_features = a.reshape(tuple([dataset_size, sequence_size] + feature_dims))
+        with h5py.File(features_dir + 'data.h5', 'a') as f:
+            f.create_dataset(f'/data/features/{i}', data=fake_data_features)
+        with h5py.File(features_dir + 'data.h5', 'a') as f:
+            f.create_dataset(f'/data/labels/{i}', data=fake_data_features)
 
     del fake_data_features
 
@@ -86,12 +85,15 @@ def get_dataset_numbered_features(dataset_size, files=1, sequence_size=2, featur
         'reshape' : r,
         }
 
-    loader, dataset = DataLoader(dataset_params).get_loader()
-    return loader, dataset, dataset_params
+    if return_dataloader:
+        loader, dataset = DataLoader(dataset_params).get_loader()
+        return loader, dataset, dataset_params
+    else:
+        return dataset_params
 
 def get_dataset_features(dataset_size, files=1, sequence_size=2, feature_dims=[1], \
         subset=0, memory=100, differently_sized=False, device='cpu', shuffle=False, \
-        dtype=float, reshape=None, break_label=False):
+        dtype=float, reshape=None, break_label=False, return_dataloader=True):
     # Create tempdir
     shutil.rmtree(tmpdir, ignore_errors=True)
     os.mkdir(tmpdir)
@@ -134,8 +136,11 @@ def get_dataset_features(dataset_size, files=1, sequence_size=2, feature_dims=[1
         'reshape' : r,
         }
 
-    loader, dataset = DataLoader(dataset_params).get_loader()
-    return loader, dataset, dataset_params
+    if return_dataloader:
+        loader, dataset = DataLoader(dataset_params).get_loader()
+        return loader, dataset, dataset_params
+    else:
+        return dataset_params
 
 def test_1D():
     dataset_size = 100
@@ -452,31 +457,93 @@ def test_large_vram_fit():
 
     assert dataset.memory_loader.is_alive() == False
 
-def test_large_vram_fit_shuffled():
-    dataset_size = 5000
-    feature_dims = [100]
-    seq_size = 200
-    files=4
-    memory = 2000.0
+# The followind tests are for the FullDataloader which is loading an entire hdf5 dataset and returns it
+def test_full():
+    files = 2
+    dataset_size = 100
+    feature_dims = [1]
+    seq_size = 2
+    dp = get_dataset_numbered_features(dataset_size=dataset_size, \
+            sequence_size=seq_size, feature_dims=feature_dims, files=2, subset=0, \
+            shuffle=False, return_dataloader=False)
+    features = FullLoader(dp).get_data('features')
+    assert features.shape == (dataset_size*files, seq_size, feature_dims[0])
 
-    # True data
-    unshuffled_features = np.zeros(tuple([dataset_size, seq_size] + \
-            feature_dims), dtype=float)
-    unshuffled_labels = np.ones((dataset_size, seq_size, 1), dtype=np.uint8)
+def test_full_3D():
+    files = 2
+    dataset_size = 100
+    feature_dims = [10, 10, 3]
+    seq_size = 2
+    dp = get_dataset_numbered_features(dataset_size=dataset_size, \
+            sequence_size=seq_size, feature_dims=feature_dims, files=2, subset=0, \
+            shuffle=False, return_dataloader=False)
+    features = FullLoader(dp).get_data('features')
+    assert features.shape == tuple(list((dataset_size*files, seq_size)) + feature_dims)
 
-    loader, dataset, dp = get_dataset_features(dataset_size=dataset_size, \
-            sequence_size=seq_size, feature_dims=feature_dims, subset=0, \
-            memory=memory, files=files, device='cpu', shuffle=True)
-    data_amount = 0
-    shuffled_features = np.zeros_like(unshuffled_features, dtype=float)
-    for i, data in enumerate(loader, 0):
-        pass
+def test_full_3D_reshape():
+    files = 2
+    dataset_size = 100
+    feature_dims = [10, 10, 3]
+    reshape= [[5, 5, 3], [1]]
+    seq_size = 2
+    dp = get_dataset_features(dataset_size=dataset_size, \
+            sequence_size=seq_size, feature_dims=feature_dims, files=2, subset=0, shuffle=False, \
+            reshape=reshape, return_dataloader=False)
+    features = FullLoader(dp).get_data('features')
+    assert features.shape == tuple(list((dataset_size*files, seq_size)) + reshape[0])
 
-    dataset.memory_loader.stop()
-    while dataset.memory_loader.is_alive():
-        time.sleep(0.1)
-    assert dataset.memory_loader.is_alive() == False
+def test_full_no_shuffle():
+    files = 1
+    dataset_size = 100
+    feature_dims = [1]
+    seq_size = 2
+    dp = get_dataset_numbered_features(dataset_size=dataset_size, \
+            sequence_size=seq_size, feature_dims=feature_dims, files=files, subset=0, shuffle=False, \
+            return_dataloader=False)
+    features = FullLoader(dp).get_data('features')
+    assert (features[0] == [[0.],[1.]]).any()
+    assert (features[10] == [[20.],[21.]]).any()
 
+np.random.seed(0)
+def test_full_shuffle():
+    files = 1
+    dataset_size = 100
+    feature_dims = [1]
+    seq_size = 2
+    dp = get_dataset_numbered_features(dataset_size=dataset_size, \
+            sequence_size=seq_size, feature_dims=feature_dims, files=files, subset=0, shuffle=True, \
+            return_dataloader=False)
+    features = FullLoader(dp).get_data('features')
+    assert (features[0] == [[52.],[53.]]).any()
+    assert (features[10] == [[106.],[107.]]).any()
+    assert (features[20] == [[86.],[87.]]).any()
+
+np.random.seed(0)
+def test_full_shuffle_2_files():
+    files = 2
+    dataset_size = 100
+    feature_dims = [1]
+    seq_size = 2
+    dp = get_dataset_numbered_features(dataset_size=dataset_size, \
+            sequence_size=seq_size, feature_dims=feature_dims, files=files, subset=0, shuffle=True)
+    features = FullLoader(dp).get_data('features')
+    assert (features[0] == [[132.],[133.]]).any()
+    assert (features[10] == [[12.],[13.]]).any()
+    assert (features[20] == [[204.],[205.]]).any()
+
+np.random.seed(0)
+def test_full_no_shuffle_2_files():
+    files = 2
+    dataset_size = 100
+    feature_dims = [1]
+    seq_size = 2
+    dp = get_dataset_numbered_features(dataset_size=dataset_size, \
+            sequence_size=seq_size, feature_dims=feature_dims, files=files, subset=0, shuffle=False)
+    features = FullLoader(dp).get_data('features')
+    assert (features[0] == [[0.],[1.]]).any()
+    assert (features[101] == [[202.],[203.]]).any()
+
+np.random.seed(0)
 def test_1D_multiple_files_epoch_shuffling():
     # Test if multiple files are shuffled correctly
     # and different each epoch
@@ -485,58 +552,187 @@ def test_1D_multiple_files_epoch_shuffling():
     feature_dims = [1]
     seq_size = 2
     loader, dataset, dp = get_dataset_numbered_features(dataset_size=dataset_size, \
-            sequence_size=seq_size, feature_dims=feature_dims, files=2, subset=0, shuffle=True)
-    data = np.arange(0, files*dataset_size*seq_size, 1).reshape((200, 2, 1))
-    for i, data in enumerate(loader, 0):
-        if i == 0:
-            assert data['features'][5,0] == 100
-        if i == 1:
-            assert data['features'][5,1] == 91
+            sequence_size=seq_size, feature_dims=feature_dims, files=files, subset=0, shuffle=True, \
+            return_dataloader=True)
+    for e in range(2):
+        for i, data in enumerate(loader, 0):
+            if i == 0 and e == 0:
+                assert data['features'][5,0] == 298
+            if i == 0 and e == 1:
+                assert data['features'][5,0] == 380
 
     dataset.memory_loader.stop()
     while dataset.memory_loader.is_alive():
         time.sleep(0.1)
     assert dataset.memory_loader.is_alive() == False
 
-# The followind tests are for the FullDataloader which is loading an entire hdf5 dataset and returns it
-
-def test_full():
+np.random.seed(0)
+def test_1D_multiple_files_epoch_no_shuffling():
+    # Test if multiple files are shuffled correctly
+    # and different each epoch
     files = 2
     dataset_size = 100
     feature_dims = [1]
     seq_size = 2
     loader, dataset, dp = get_dataset_numbered_features(dataset_size=dataset_size, \
-            sequence_size=seq_size, feature_dims=feature_dims, files=2, subset=0, shuffle=False)
-    features = FullLoader(dp).get_data('features')
-    assert features.shape == (dataset_size*files, seq_size, feature_dims[0])
-def test_full_3D():
-    files = 2
-    dataset_size = 100
-    feature_dims = [10, 10, 3]
-    seq_size = 2
-    loader, dataset, dp = get_dataset_numbered_features(dataset_size=dataset_size, \
-            sequence_size=seq_size, feature_dims=feature_dims, files=2, subset=0, shuffle=False)
-    features = FullLoader(dp).get_data('features')
-    assert features.shape == tuple(list((dataset_size*files, seq_size)) + feature_dims)
+            sequence_size=seq_size, feature_dims=feature_dims, files=files, subset=0, shuffle=False, \
+            return_dataloader=True)
+    for e in range(5):
+        for i, data in enumerate(loader, 0):
+            if i == 0 and e == 0:
+                assert data['features'][5,0] == 10
+            if i == 0 and e == 1:
+                assert data['features'][5,0] == 10
 
-def test_full_shuffle():
+    dataset.memory_loader.stop()
+    while dataset.memory_loader.is_alive():
+        time.sleep(0.1)
+    assert dataset.memory_loader.is_alive() == False
+
+def test_if_all_there():
     files = 2
-    dataset_size = 100
+    dataset_size = 5
     feature_dims = [1]
-    seq_size = 2
+    seq_size = 1
     loader, dataset, dp = get_dataset_numbered_features(dataset_size=dataset_size, \
-            sequence_size=seq_size, feature_dims=feature_dims, files=2, subset=0, shuffle=True)
-    features = FullLoader(dp).get_data('features')
-    assert (features[0] != [[0],[1]]).any()
-    assert (features[10] == [[370],[371]]).any()
+            sequence_size=seq_size, feature_dims=feature_dims, files=files, subset=0, shuffle=False, \
+            return_dataloader=True)
+    data = []
+    for i in range(0,files,1):
+        a = np.arange(0, dataset_size*seq_size*np.prod(feature_dims), 1, dtype=float) + \
+                dataset_size * seq_size * np.prod(feature_dims) * i
+        data.append(a.reshape(tuple([dataset_size, seq_size] + feature_dims)))
+    data = np.concatenate(data, 0)
 
-def test_full_3D_reshape():
+    for e in range(3):
+        loader_data = []
+        for i, d in enumerate(loader, 0):
+            loader_data.append(d['features'].numpy())
+        loader_data = np.concatenate(loader_data, 0)
+        assert np.array_equal(data, loader_data) == True
+    dataset.memory_loader.stop()
+    while dataset.memory_loader.is_alive():
+        time.sleep(0.1)
+    assert dataset.memory_loader.is_alive() == False
+
+def test_if_all_there_shuffle():
     files = 2
-    dataset_size = 100
-    feature_dims = [10, 10, 3]
-    reshape= [[5, 5, 3], [1]]
-    seq_size = 2
-    loader, dataset, dp = get_dataset_features(dataset_size=dataset_size, \
-            sequence_size=seq_size, feature_dims=feature_dims, files=2, subset=0, shuffle=False, reshape=reshape)
-    features = FullLoader(dp).get_data('features')
-    assert features.shape == tuple(list((dataset_size*files, seq_size)) + reshape[0])
+    dataset_size = 5
+    feature_dims = [1]
+    seq_size = 1
+    loader, dataset, dp = get_dataset_numbered_features(dataset_size=dataset_size, \
+            sequence_size=seq_size, feature_dims=feature_dims, files=files, subset=0, shuffle=True, \
+            return_dataloader=True)
+
+    epoch_data = []
+    for e in range(3):
+        loader_data = []
+        for i, d in enumerate(loader, 0):
+            loader_data.append(d['features'].numpy())
+        loader_data = np.concatenate(loader_data, 0)
+        epoch_data.append(loader_data)
+
+    assert (epoch_data[0] == epoch_data[1]).all() == False
+    assert (epoch_data[0] == epoch_data[2]).all() == False
+    assert (epoch_data[1] == epoch_data[2]).all() == False
+    dataset.memory_loader.stop()
+    while dataset.memory_loader.is_alive():
+        time.sleep(0.1)
+    assert dataset.memory_loader.is_alive() == False
+
+def test_if_all_there_no_fit():
+    files = 2
+    dataset_size = 500
+    feature_dims = [100]
+    seq_size = 100
+    memory = 100
+    loader, dataset, dp = get_dataset_numbered_features(dataset_size=dataset_size, \
+            sequence_size=seq_size, feature_dims=feature_dims, files=files, subset=0, shuffle=False, \
+            return_dataloader=True)
+    data = []
+    for i in range(0,files,1):
+        a = np.arange(0, dataset_size*seq_size*np.prod(feature_dims), 1, dtype=float) + \
+                dataset_size * seq_size * np.prod(feature_dims) * i
+        data.append(a.reshape(tuple([dataset_size, seq_size] + feature_dims)))
+    data = np.concatenate(data, 0)
+
+    for e in range(3):
+        loader_data = []
+        for i, d in enumerate(loader, 0):
+            loader_data.append(d['features'].numpy())
+        loader_data = np.concatenate(loader_data, 0)
+        assert np.array_equal(data, loader_data) == True
+    dataset.memory_loader.stop()
+    while dataset.memory_loader.is_alive():
+        time.sleep(0.1)
+    assert dataset.memory_loader.is_alive() == False
+
+def test_if_all_there_shuffle_no_fit():
+    files = 2
+    dataset_size = 500
+    feature_dims = [100]
+    seq_size = 100
+    memory = 100
+    loader, dataset, dp = get_dataset_numbered_features(dataset_size=dataset_size, \
+            sequence_size=seq_size, feature_dims=feature_dims, files=files, subset=0, shuffle=True, \
+            return_dataloader=True)
+
+    epoch_data = []
+    for e in range(3):
+        loader_data = []
+        for i, d in enumerate(loader, 0):
+            loader_data.append(d['features'].numpy())
+        loader_data = np.concatenate(loader_data, 0)
+        epoch_data.append(loader_data)
+
+    assert (epoch_data[0] == epoch_data[1]).all() == False
+    assert (epoch_data[0] == epoch_data[2]).all() == False
+    assert (epoch_data[1] == epoch_data[2]).all() == False
+    assert (epoch_data[0].mean() == epoch_data[1].mean()) == True
+    assert (epoch_data[0].mean() == epoch_data[2].mean()) == True
+    assert (epoch_data[2].mean() == epoch_data[1].mean()) == True
+    dataset.memory_loader.stop()
+    while dataset.memory_loader.is_alive():
+        time.sleep(0.1)
+    assert dataset.memory_loader.is_alive() == False
+
+def test_pong():
+    dp = {'memory' : 7000,
+        'data_path' : '/media/oli/LinuxData/googledrive/datasets/data/LFO/pong_visual/detenv/detpol/',
+        'data_labels' : ['states', 'actions'],
+        'data_types' : [np.uint8, int],
+        'data_shapes' : [[2, 200, 200, 3], [2, 1]],
+        'batch_size' : 64,
+        'subset' : 0,
+        'shuffle' : False,
+        'device' : 'cpu',
+        'verbose' : True,
+        'reshape' : [[200, 200, 3], [1]],
+        }
+
+    states = FullLoader(dp).get_data('states')[:576]
+    loader, dataset = DataLoader(dp).get_loader()
+
+    import cv2
+    data = []
+    for i, d in enumerate(loader, 0):
+        data.append(d['states'].cpu().numpy())
+        if i == 8:
+            break
+        """
+        for x in data['states']:
+            for s in x:
+                #cv2.imshow("arst", s.cpu().numpy())
+                #cv2.waitKey(33)
+        """
+    data = np.concatenate(data, 0)
+    assert (data == states).all() == True
+    dataset.memory_loader.stop()
+    while dataset.memory_loader.is_alive():
+        time.sleep(0.1)
+    assert dataset.memory_loader.is_alive() == False
+
+# TODO can we make the getitem function smaller
+# TODO was the data always the same???
+# Run all ILPO and VAE pre-train experiments with embeddings again
+# Run VAE experiments again

@@ -78,7 +78,7 @@ class FullLoader():
         data = []
         for idx, i in enumerate(info):
             a = self.load_file(dl, idx)
-            data.append(a[0])
+            data.append(a[0].cpu())
         data = np.concatenate(data, axis=0)
         if self.dp['shuffle']:
             np.random.shuffle(data)
@@ -148,7 +148,7 @@ class MemoryLoader(threading.Thread):
     def stop(self):
         self.running = False
 
-    def load_file(self, dl, load_idx, shuffle_list):
+    def load_file(self, dl, load_idx):
         data_name_target = self.data_info[dl][load_idx]['data_name']
         r = self.data_info[dl][load_idx]['reshape']
         with h5py.File(self.data_info[dl][load_idx]['data_path']) as f:
@@ -158,9 +158,6 @@ class MemoryLoader(threading.Thread):
                         if data_label == dl and \
                                 data_name == data_name_target:
                             d = np.array(ds)
-                            # Shuffle the data of an individual data file
-                            if self.shuffle:
-                                d = d[shuffle_list]
                             a = d.astype(self.data_info[dl][load_idx]['data_type'])
                             assert a.dtype == self.data_info[dl][load_idx]['data_type'], \
                                     "Error, loaded file was not converted to dtype specified" \
@@ -190,14 +187,9 @@ class MemoryLoader(threading.Thread):
                 d = dict()
                 sample_size = 0.0 
                 datapoints = 0
-                # Get the number of elements in one data file
-                a = self.data_info[self.data_labels[0]][0]['orig_shape'][0]
-                # Create this shuffle list so all datafiles for a given data label
-                # are shuffled in the same way
-                shuffle_list = np.random.permutation(a)
 
                 for dl in self.data_labels:
-                    d[dl], fsize = self.load_file(dl, self.load_list[self.load_idx], shuffle_list)
+                    d[dl], fsize = self.load_file(dl, self.load_list[self.load_idx])
                     datapoints = d[dl].shape[0]
                     sample_size += fsize
                 d['size'] = sample_size
@@ -242,6 +234,12 @@ class DataSet(data.Dataset):
             assert str(dl) in self.found_data_labels, 'Error, passed data_labels that dont exist!'
             self.one_file_size += self.data_info[dl][0]['fsize']
 
+        a = self.data_info[self.dp['data_labels'][0]][0]['orig_shape'][0]
+        if self.dp['shuffle']:
+            self.shuffle_list = self.reshuffle(a)
+        else:
+            self.shuffle_list = np.arange(a)
+
         # Check if the full dataset fits in RAM
         self.fit_memory = False
         self.memory = Queue()
@@ -269,8 +267,9 @@ class DataSet(data.Dataset):
 
         self.memory_loader.start()
 
-        self.cache = None
-        self.cache_idx = 0
+
+    def reshuffle(self, a):
+        return np.random.permutation(a) 
 
     def get_files(self):
         p = Path(self.dp['data_path'])
@@ -304,7 +303,9 @@ class DataSet(data.Dataset):
                                     self.len += shapes[0]
                                     self.dataset_files += 1
                             else:
-                                self.len = self.dp['subset']
+                                if data_label == self.dp['data_labels'][0]:
+                                    self.len = self.dp['subset']
+                                    self.dataset_files += 1
 
                             data_type = self.dp['data_types'][self.dp['data_labels'].index(data_label)]
                             r = self.dp['reshape'][self.dp['data_labels'].index(data_label)]
@@ -318,36 +319,61 @@ class DataSet(data.Dataset):
                                 'data_label': data_label,
                                 'data_name': data_name,
                                 'data_type': data_type,
-                                'orig_shape': np.array(ds)[:self.len].shape, 
+                                'orig_shape': np.array(ds).shape, 
                                 'reshape': r,
                                 'fsize': fsize,
                                 })
 
-            """
-            assert self.dp['subset'] <= self.len, "Error, subset larger than dataset!"
-            if self.dp['subset'] > 0:
-                self.len = self.dp['subset']
-            """
-
     def __len__(self):
         return self.len
 
+    def print_mem(self):
+        for i in range(self.memory.qsize()):
+            print(self.memory.queue[i])
+
     def __getitem__(self, idx):
+        # Wait for the memory to be filled
+        assert self.dataset_files > 0, "No dataset files found"
+
+        if self.fit_memory:
+            while self.memory.qsize() < self.dataset_files:
+                #print(f"waiting, {self.memory.qsize()}, {self.dataset_files}, {self.fit_memory}")
+                time.sleep(0.1)
+        else:
+            while self.memory.qsize() < 1:
+                #print(f"waiting, {self.memory.qsize()}, {self.dataset_files}, {self.fit_memory}")
+                time.sleep(0.1)
+
         if idx == 0:
-            self.cache_idx = 0
-        if self.cache == None:
-            self.cache = self.memory.get()
-        elif idx-self.cache_idx >= self.cache['datapoints']:
-            # If all fit in memory the memory loader ends.
-            # So we have to put the taken file back into the queue 
-            # or we run out of data
+            self.file_idx = 0
+            self.idx_offset = 0
             if self.fit_memory:
-                self.memory.put(self.cache)
-            self.cache = self.memory.get()
-            self.cache_idx += self.cache['datapoints']
-        idx -= self.cache_idx
+                self.cache = self.memory.queue[self.file_idx]
+            else:
+                self.cache = self.memory.get()
+
+        if idx - self.idx_offset >= self.cache['datapoints']:
+            self.file_idx += 1
+            if self.file_idx >= self.dataset_files:
+                self.file_idx = 0
+                self.idx_offset = 0
+            self.idx_offset += self.cache['datapoints']
+            if self.fit_memory:
+                self.cache = self.memory.queue[self.file_idx]
+            else:
+                self.cache = self.memory.get()
+            # Every file re-shuffle the shuffle list
+            if self.dp['shuffle']:
+                self.shuffle_list = self.reshuffle(np.arange(self.cache['datapoints']))
+
+        # Translate the idx to a spcific cache index
+        idx = idx - self.idx_offset
+
+        # Translate idx according to files shuffle list
+        if self.dp['shuffle']:
+            idx = self.shuffle_list[idx]
+
         d = dict()
         for dl in self.dp['data_labels']:
             d[dl] = self.cache[dl][idx]
         return d
-
