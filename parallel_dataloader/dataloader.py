@@ -36,7 +36,7 @@ class FullLoader():
                             if tuple(r) != d.shape[-len(r):]:
                                 d = reshape(d, r)
                             d = torch.from_numpy(d).to(self.device)
-                            return d, self.data_info[dl][load_idx]['fsize']
+                            return d
 
     def get_data(self, dl):
         p = Path(self.dp['data_path'])
@@ -78,7 +78,7 @@ class FullLoader():
         data = []
         for idx, i in enumerate(info):
             a = self.load_file(dl, idx)
-            data.append(a[0].cpu())
+            data.append(a.cpu())
         data = np.concatenate(data, axis=0)
         if self.dp['shuffle']:
             np.random.shuffle(data)
@@ -233,7 +233,7 @@ class DataSet(data.Dataset):
         for dl in self.dp['data_labels']:
             assert str(dl) in self.found_data_labels, 'Error, passed data_labels that dont exist!'
             self.one_file_size += self.data_info[dl][0]['fsize']
-
+    
         a = self.data_info[self.dp['data_labels'][0]][0]['orig_shape'][0]
         if self.dp['shuffle']:
             self.shuffle_list = self.reshuffle(a)
@@ -266,7 +266,6 @@ class DataSet(data.Dataset):
             exit()
 
         self.memory_loader.start()
-
 
     def reshuffle(self, a):
         return np.random.permutation(a) 
@@ -326,10 +325,6 @@ class DataSet(data.Dataset):
 
     def __len__(self):
         return self.len
-
-    def print_mem(self):
-        for i in range(self.memory.qsize()):
-            print(self.memory.queue[i])
 
     def __getitem__(self, idx):
         # Wait for the memory to be filled

@@ -615,6 +615,31 @@ def test_if_all_there():
         time.sleep(0.1)
     assert dataset.memory_loader.is_alive() == False
 
+def test_if_all_there_subset():
+    # TODO
+    files = 2
+    dataset_size = 10
+    feature_dims = [1]
+    seq_size = 1
+    subset = 12
+    loader, dataset, dp = get_dataset_numbered_features(dataset_size=dataset_size, \
+            sequence_size=seq_size, feature_dims=feature_dims, files=files, subset=subset, shuffle=False, \
+            return_dataloader=True)
+    print(dp)
+    data = FullLoader(dp).get_data('features')
+    print(data)
+
+    for e in range(3):
+        loader_data = []
+        for i, d in enumerate(loader, 0):
+            loader_data.append(d['features'].numpy())
+        loader_data = np.concatenate(loader_data, 0)
+        assert np.array_equal(data, loader_data) == True
+    dataset.memory_loader.stop()
+    while dataset.memory_loader.is_alive():
+        time.sleep(0.1)
+    assert dataset.memory_loader.is_alive() == False
+
 def test_if_all_there_shuffle():
     files = 2
     dataset_size = 5
@@ -696,7 +721,94 @@ def test_if_all_there_shuffle_no_fit():
         time.sleep(0.1)
     assert dataset.memory_loader.is_alive() == False
 
+def test_cartpole():
+    print("cartpole")
+    dp = {'memory' : 100,
+        'data_path' : '/media/oli/LinuxData/googledrive/datasets/data/LFO/cartpole/detenv/detpol/',
+        'data_labels' : ['states', 'actions'],
+        'data_types' : [float, int],
+        'data_shapes' : [[2, 4], [2, 1]],
+        'batch_size' : 32,
+        'subset' : 0,
+        'shuffle' : False,
+        'device' : 'cpu',
+        'verbose' : True,
+        'reshape' : [[2, 4], [2, 1]],
+        }
+
+    states = FullLoader(dp).get_data('states')
+    loader, dataset = DataLoader(dp).get_loader()
+
+    data = []
+    for i, d in enumerate(loader, 0):
+        data.append(d['states'].cpu().numpy())
+    data = np.concatenate(data, 0)
+    assert (data == states).all() == True
+    dataset.memory_loader.stop()
+    while dataset.memory_loader.is_alive():
+        time.sleep(0.1)
+    assert dataset.memory_loader.is_alive() == False
+
+def test_blob():
+    print("blob")
+    dp = {'memory' : 2000,
+        'data_path' : '/media/oli/LinuxData/googledrive/datasets/data/blob/blob_20/train/',
+        'data_labels' : ['img', 'vel', 'pos'],
+        'data_types' : [np.uint8, float, float],
+        'data_shapes' : [[20, 100, 100], [20, 2], [20, 2]],
+        'batch_size' : 64,
+        'subset' : 0,
+        'shuffle' : False,
+        'device' : 'cpu',
+        'verbose' : True,
+        'reshape' : [[50, 50], [2], [2]],
+        }
+
+    states = FullLoader(dp).get_data('img')
+    loader, dataset = DataLoader(dp).get_loader()
+
+    data = []
+    for i, d in enumerate(loader, 0):
+        data.append(d['img'].cpu().numpy())
+    data = np.concatenate(data, 0)
+    assert (data == states).all() == True
+    dataset.memory_loader.stop()
+    while dataset.memory_loader.is_alive():
+        time.sleep(0.1)
+    assert dataset.memory_loader.is_alive() == False
+
+def test_blob_shuffle():
+    print("blob shuffle")
+    dp = {'memory' : 2000,
+        'data_path' : '/media/oli/LinuxData/googledrive/datasets/data/blob/blob_20/train/',
+        'data_labels' : ['img', 'vel', 'pos'],
+        'data_types' : [np.uint8, float, float],
+        'data_shapes' : [[20, 100, 100], [20, 2], [20, 2]],
+        'batch_size' : 64,
+        'subset' : 0,
+        'shuffle' : True,
+        'device' : 'cpu',
+        'verbose' : True,
+        'reshape' : [[50, 50], [2], [2]],
+        }
+
+    np.random.seed(0)
+    states = FullLoader(dp).get_data('img')
+    np.random.seed(0)
+    loader, dataset = DataLoader(dp).get_loader()
+
+    data = []
+    for i, d in enumerate(loader, 0):
+        data.append(d['img'].cpu().numpy())
+    data = np.concatenate(data, 0)
+    assert np.array_equal(np.sort(data, 0), np.sort(states, 0)) == True
+    dataset.memory_loader.stop()
+    while dataset.memory_loader.is_alive():
+        time.sleep(0.1)
+    assert dataset.memory_loader.is_alive() == False
+
 def test_pong():
+    print("pong")
     dp = {'memory' : 7000,
         'data_path' : '/media/oli/LinuxData/googledrive/datasets/data/LFO/pong_visual/detenv/detpol/',
         'data_labels' : ['states', 'actions'],
@@ -707,32 +819,29 @@ def test_pong():
         'shuffle' : False,
         'device' : 'cpu',
         'verbose' : True,
-        'reshape' : [[200, 200, 3], [1]],
+        'reshape' : [[50, 50, 3], [1]],
         }
 
-    states = FullLoader(dp).get_data('states')[:576]
+    states = FullLoader(dp).get_data('states')
     loader, dataset = DataLoader(dp).get_loader()
 
     import cv2
     data = []
     for i, d in enumerate(loader, 0):
         data.append(d['states'].cpu().numpy())
-        if i == 8:
-            break
-        """
-        for x in data['states']:
-            for s in x:
-                #cv2.imshow("arst", s.cpu().numpy())
-                #cv2.waitKey(33)
-        """
     data = np.concatenate(data, 0)
     assert (data == states).all() == True
     dataset.memory_loader.stop()
     while dataset.memory_loader.is_alive():
         time.sleep(0.1)
     assert dataset.memory_loader.is_alive() == False
-
-# TODO can we make the getitem function smaller
-# TODO was the data always the same???
+# TODO Test subset stuff, add the following line to line 83 to fix full loader
+#   data = data[:self.dp['subset']]
 # Run all ILPO and VAE pre-train experiments with embeddings again
 # Run VAE experiments again
+
+# DONE was the data always the same???
+#   - There was a problem when multiple files were loaded both when the data fit and didnt fit in memory
+#   - Also the shuffle list was not always shuffled
+#   - It is very likely that the VAEToolbox results and LFO results for pong_visual are skewed becaus of that
+
