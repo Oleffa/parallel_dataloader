@@ -294,7 +294,7 @@ class DataSet(data.Dataset):
         """
         l1 = []
         for dl in self.dp['data_labels']:
-            assert str(dl) in self.found_data_labels, 'Error, passed data_labels that dont exist!'
+            assert str(dl) in self.found_data_labels, 'Error, passed data_labels that dont exist: {}. Found data labels: {}!'.format(dl, self.found_data_labels)
             data_names = []
             for f in self.data_info[dl]:
                 data_names.append(f['data_name'])
