@@ -1,9 +1,9 @@
 from setuptools import setup
 
 setup(name='parallel-dataloader',
-        version='1.0',
+        version='2.0',
         packages=['parallel_dataloader'],
-        install_requires=['torch==1.11', \
+        install_requires=['torch==1.13', \
                 'h5py==3.7.0', \
                 'psutil==5.9.1', \
                 'opencv-python==4.5.5.64', \
