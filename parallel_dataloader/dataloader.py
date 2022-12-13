@@ -9,10 +9,24 @@ import threading
 import time
 from queue import Queue
 import psutil
+import math
+
+def check_dp_integrity(dp):
+    assert len(dp['data_labels']) == len(dp['data_types']), \
+            "Error, length of data_labels != data_types"
+    assert len(dp['data_labels']) == len(dp['data_shapes']), \
+            "Error, length of data_labels != data_shapes"
+    assert len(dp['data_types']) == len(dp['data_shapes']), \
+            "Error, length of data_types != data_shapes"
+    assert len(dp['data_labels']) == len(dp['reshape']), \
+            "Error, length of data_labels != reshape"
+    assert dp['subset'] >= 0, \
+            "Error, illegal argument for subset, has to be >= 0"
 
 class FullLoader():
     def __init__(self, dataset_params):
         self.dp = dataset_params
+        check_dp_integrity(self.dp)
         self.device = self.dp['device']
         self.data_info = dict()
         for dl in self.dp['data_labels']:
@@ -80,6 +94,8 @@ class FullLoader():
             a = self.load_file(dl, idx)
             data.append(a.cpu())
         data = np.concatenate(data, axis=0)
+        if self.dp['subset'] > 0:
+            data = data[:self.dp['subset']]
         if self.dp['shuffle']:
             np.random.shuffle(data)
         return data
@@ -208,16 +224,9 @@ class DataSet(data.Dataset):
     def __init__(self, dataset_params):
         super().__init__()
         self.dp = dataset_params
+        check_dp_integrity(self.dp)
         self.v = self.dp['verbose']
 
-        assert len(self.dp['data_labels']) == len(self.dp['data_types']), \
-                "Error, length of data_labels != data_types"
-        assert len(self.dp['data_labels']) == len(self.dp['data_shapes']), \
-                "Error, length of data_labels != data_shapes"
-        assert len(self.dp['data_types']) == len(self.dp['data_shapes']), \
-                "Error, length of data_types != data_shapes"
-        assert len(self.dp['data_labels']) == len(self.dp['reshape']), \
-                "Error, length of data_labels != reshape"
 
         # Get basic info about the dataset from get_files
         self.data_info = dict()
@@ -228,10 +237,18 @@ class DataSet(data.Dataset):
         self.dataset_size = 0.0
         self.dataset_files = 0
         self.get_files()
+        self.datapoints_per_file = int(self.len / self.dataset_files)
+        self.last_size = self.datapoints_per_file
+        assert self.datapoints_per_file * self.dataset_files == self.len
+
+        self.check_data_names()
+
+        # This will change self.dataset_size, self.len, self.dataset_files and self.data_info and self.last_size
+        if self.dp['subset'] > 0:
+            self.clean_info_if_subset()
 
         self.one_file_size = 0.0
         for dl in self.dp['data_labels']:
-            assert str(dl) in self.found_data_labels, 'Error, passed data_labels that dont exist!'
             self.one_file_size += self.data_info[dl][0]['fsize']
     
         a = self.data_info[self.dp['data_labels'][0]][0]['orig_shape'][0]
@@ -270,6 +287,43 @@ class DataSet(data.Dataset):
     def reshuffle(self, a):
         return np.random.permutation(a) 
 
+    def check_data_names(self):
+        """
+        Make sure the data names of all data labels are all sorted the same
+        Otherwise we might mix labels and features
+        """
+        l1 = []
+        for dl in self.dp['data_labels']:
+            assert str(dl) in self.found_data_labels, 'Error, passed data_labels that dont exist!'
+            data_names = []
+            for f in self.data_info[dl]:
+                data_names.append(f['data_name'])
+            l1.append(data_names)
+        for i in l1:
+            for j in l1:
+                assert i == j
+
+    def clean_info_if_subset(self):
+        """
+        This function is used when subset > 0 such that we dont load too many files.
+        This will change self.dataset_size, self.len, self.dataset_files and self.data_info.
+        and self.last_size
+        """
+        assert self.dp['subset'] <= self.len, \
+                "Error, subset larger than amount of data"
+
+        self.full_len = self.len
+        self.dataset_files = math.ceil(self.dp['subset']/self.datapoints_per_file)
+        self.len = self.dp['subset']
+        self.dataset_size = 0
+        for dl in self.dp['data_labels']:
+            self.dataset_size += (self.data_info[dl][0]['fsize'] * self.dataset_files)
+            self.data_info[dl] = self.data_info[dl][:self.dataset_files]
+        # Determine how many elements of the last file should be used
+        self.last_size = self.dp['subset']
+        while self.last_size - self.datapoints_per_file > 0:
+            self.last_size -= self.datapoints_per_file
+
     def get_files(self):
         p = Path(self.dp['data_path'])
         assert p.is_dir(), "Error, {} is not a directory".format(p)
@@ -292,19 +346,11 @@ class DataSet(data.Dataset):
                             else:
                                 assert shapes[0] == np.array(ds).shape[0], "Error, some parts " \
                                         + "of the dataset have different amounts of datapoints"
-                            # Only take a part of the data when subset is specified
-                            assert self.dp['subset'] <= shapes[0] and self.dp['subset'] >= 0, \
-                                     "Error, subset larger than amount of data"
-                            
-                            # Compute the amount of samples in the dataset
-                            if self.dp['subset'] == 0:
-                                if data_label == self.dp['data_labels'][0]:
-                                    self.len += shapes[0]
-                                    self.dataset_files += 1
-                            else:
-                                if data_label == self.dp['data_labels'][0]:
-                                    self.len = self.dp['subset']
-                                    self.dataset_files += 1
+
+                            # Compute the amount of samples in the dataset and how many files are there to be loaded
+                            if data_label == self.dp['data_labels'][0]:
+                                self.len += shapes[0]
+                                self.dataset_files += 1
 
                             data_type = self.dp['data_types'][self.dp['data_labels'].index(data_label)]
                             r = self.dp['reshape'][self.dp['data_labels'].index(data_label)]
@@ -346,6 +392,11 @@ class DataSet(data.Dataset):
                 self.cache = self.memory.queue[self.file_idx]
             else:
                 self.cache = self.memory.get()
+            if self.dp['shuffle']:
+                if self.file_idx == self.dataset_files-1:
+                    self.shuffle_list = self.reshuffle(self.last_size)
+                else:
+                    self.shuffle_list = self.reshuffle(np.arange(self.cache['datapoints']))
 
         if idx - self.idx_offset >= self.cache['datapoints']:
             self.file_idx += 1
@@ -359,7 +410,10 @@ class DataSet(data.Dataset):
                 self.cache = self.memory.get()
             # Every file re-shuffle the shuffle list
             if self.dp['shuffle']:
-                self.shuffle_list = self.reshuffle(np.arange(self.cache['datapoints']))
+                if self.file_idx == self.dataset_files-1:
+                    self.shuffle_list = self.reshuffle(self.last_size)
+                else:
+                    self.shuffle_list = self.reshuffle(np.arange(self.cache['datapoints']))
 
         # Translate the idx to a spcific cache index
         idx = idx - self.idx_offset

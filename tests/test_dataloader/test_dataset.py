@@ -554,12 +554,13 @@ def test_1D_multiple_files_epoch_shuffling():
     loader, dataset, dp = get_dataset_numbered_features(dataset_size=dataset_size, \
             sequence_size=seq_size, feature_dims=feature_dims, files=files, subset=0, shuffle=True, \
             return_dataloader=True)
+    
     for e in range(2):
         for i, data in enumerate(loader, 0):
             if i == 0 and e == 0:
-                assert data['features'][5,0] == 298
-            if i == 0 and e == 1:
                 assert data['features'][5,0] == 380
+            if i == 0 and e == 1:
+                assert data['features'][5,0] == 388
 
     dataset.memory_loader.stop()
     while dataset.memory_loader.is_alive():
@@ -577,12 +578,18 @@ def test_1D_multiple_files_epoch_no_shuffling():
     loader, dataset, dp = get_dataset_numbered_features(dataset_size=dataset_size, \
             sequence_size=seq_size, feature_dims=feature_dims, files=files, subset=0, shuffle=False, \
             return_dataloader=True)
-    for e in range(5):
-        for i, data in enumerate(loader, 0):
-            if i == 0 and e == 0:
-                assert data['features'][5,0] == 10
-            if i == 0 and e == 1:
-                assert data['features'][5,0] == 10
+
+    epoch_data = []
+    for e in range(3):
+        loader_data = []
+        for i, d in enumerate(loader, 0):
+            loader_data.append(d['features'].numpy())
+        loader_data = np.concatenate(loader_data, 0)
+        epoch_data.append(loader_data)
+
+    assert (epoch_data[0] == epoch_data[1]).all() == True
+    assert (epoch_data[0] == epoch_data[2]).all() == True
+    assert (epoch_data[1] == epoch_data[2]).all() == True
 
     dataset.memory_loader.stop()
     while dataset.memory_loader.is_alive():
@@ -616,8 +623,7 @@ def test_if_all_there():
     assert dataset.memory_loader.is_alive() == False
 
 def test_if_all_there_subset():
-    # TODO
-    files = 2
+    files = 3
     dataset_size = 10
     feature_dims = [1]
     seq_size = 1
@@ -625,9 +631,7 @@ def test_if_all_there_subset():
     loader, dataset, dp = get_dataset_numbered_features(dataset_size=dataset_size, \
             sequence_size=seq_size, feature_dims=feature_dims, files=files, subset=subset, shuffle=False, \
             return_dataloader=True)
-    print(dp)
     data = FullLoader(dp).get_data('features')
-    print(data)
 
     for e in range(3):
         loader_data = []
@@ -713,9 +717,39 @@ def test_if_all_there_shuffle_no_fit():
     assert (epoch_data[0] == epoch_data[1]).all() == False
     assert (epoch_data[0] == epoch_data[2]).all() == False
     assert (epoch_data[1] == epoch_data[2]).all() == False
-    assert (epoch_data[0].mean() == epoch_data[1].mean()) == True
-    assert (epoch_data[0].mean() == epoch_data[2].mean()) == True
-    assert (epoch_data[2].mean() == epoch_data[1].mean()) == True
+    assert np.array_equal(np.sort(epoch_data[0], 0), np.sort(epoch_data[1], 0)) == True
+    assert np.array_equal(np.sort(epoch_data[0], 0), np.sort(epoch_data[2], 0)) == True
+    assert np.array_equal(np.sort(epoch_data[2], 0), np.sort(epoch_data[1], 0)) == True
+    dataset.memory_loader.stop()
+    while dataset.memory_loader.is_alive():
+        time.sleep(0.1)
+    assert dataset.memory_loader.is_alive() == False
+
+def test_if_all_there_shuffle_subset_no_fit():
+    files = 2
+    dataset_size = 500
+    feature_dims = [100]
+    seq_size = 100
+    memory = 100
+    subset=750
+    loader, dataset, dp = get_dataset_numbered_features(dataset_size=dataset_size, \
+            sequence_size=seq_size, feature_dims=feature_dims, files=files, subset=750, shuffle=True, \
+            return_dataloader=True)
+
+    epoch_data = []
+    for e in range(3):
+        loader_data = []
+        for i, d in enumerate(loader, 0):
+            loader_data.append(d['features'].numpy())
+        loader_data = np.concatenate(loader_data, 0)
+        epoch_data.append(loader_data)
+
+    assert (epoch_data[0] == epoch_data[1]).all() == False
+    assert (epoch_data[0] == epoch_data[2]).all() == False
+    assert (epoch_data[1] == epoch_data[2]).all() == False
+    assert np.array_equal(np.sort(epoch_data[0], 0), np.sort(epoch_data[1], 0)) == True
+    assert np.array_equal(np.sort(epoch_data[0], 0), np.sort(epoch_data[2], 0)) == True
+    assert np.array_equal(np.sort(epoch_data[2], 0), np.sort(epoch_data[1], 0)) == True
     dataset.memory_loader.stop()
     while dataset.memory_loader.is_alive():
         time.sleep(0.1)
@@ -807,6 +841,7 @@ def test_blob_shuffle():
         time.sleep(0.1)
     assert dataset.memory_loader.is_alive() == False
 
+
 def test_pong():
     print("pong")
     dp = {'memory' : 7000,
@@ -825,7 +860,6 @@ def test_pong():
     states = FullLoader(dp).get_data('states')
     loader, dataset = DataLoader(dp).get_loader()
 
-    import cv2
     data = []
     for i, d in enumerate(loader, 0):
         data.append(d['states'].cpu().numpy())
@@ -835,8 +869,115 @@ def test_pong():
     while dataset.memory_loader.is_alive():
         time.sleep(0.1)
     assert dataset.memory_loader.is_alive() == False
-# TODO Test subset stuff, add the following line to line 83 to fix full loader
-#   data = data[:self.dp['subset']]
+
+def test_pong_no_fit():
+    print("pong")
+    dp = {'memory' : 175,
+        'data_path' : '/media/oli/LinuxData/googledrive/datasets/data/LFO/pong_visual/detenv/detpol/',
+        'data_labels' : ['states', 'actions'],
+        'data_types' : [np.uint8, int],
+        'data_shapes' : [[2, 200, 200, 3], [2, 1]],
+        'batch_size' : 64,
+        'subset' : 0,
+        'shuffle' : False,
+        'device' : 'cpu',
+        'verbose' : True,
+        'reshape' : [[50, 50, 3], [1]],
+        }
+
+    states = FullLoader(dp).get_data('states')
+    loader, dataset = DataLoader(dp).get_loader()
+
+    import cv2
+    for e in range(3):
+        data = []
+        for i, d in enumerate(loader, 0):
+            data.append(d['states'].cpu().numpy())
+        data = np.concatenate(data, 0)
+        assert (data == states).all() == True
+    dataset.memory_loader.stop()
+    while dataset.memory_loader.is_alive():
+        time.sleep(0.1)
+    assert dataset.memory_loader.is_alive() == False
+
+def test_pong_no_fit_subset():
+    print("pong")
+    dp = {'memory' : 70,
+        'data_path' : '/media/oli/LinuxData/googledrive/datasets/data/LFO/pong_visual/detenv/detpol/',
+        'data_labels' : ['states', 'actions'],
+        'data_types' : [np.uint8, int],
+        'data_shapes' : [[2, 200, 200, 3], [2, 1]],
+        'batch_size' : 64,
+        'subset' : 5000,
+        'shuffle' : False,
+        'device' : 'cpu',
+        'verbose' : True,
+        'reshape' : [[50, 50, 3], [1]],
+        }
+
+    states = FullLoader(dp).get_data('states')
+    loader, dataset = DataLoader(dp).get_loader()
+
+    import cv2
+    for e in range(3):
+        data = []
+        for i, d in enumerate(loader, 0):
+            data.append(d['states'].cpu().numpy())
+        data = np.concatenate(data, 0)
+        assert (data == states).all() == True
+    dataset.memory_loader.stop()
+    while dataset.memory_loader.is_alive():
+        time.sleep(0.1)
+    assert dataset.memory_loader.is_alive() == False
+
+def test_pong_no_fit_shuffle_subset():
+    print("pong")
+    dp = {'memory' : 70,
+        'data_path' : '/media/oli/LinuxData/googledrive/datasets/data/LFO/pong_visual/detenv/detpol/',
+        'data_labels' : ['states', 'actions'],
+        'data_types' : [np.uint8, int],
+        'data_shapes' : [[2, 200, 200, 3], [2, 1]],
+        'batch_size' : 64,
+        'subset' : 5000,
+        'shuffle' : True,
+        'device' : 'cpu',
+        'verbose' : True,
+        'reshape' : [[50, 50, 3], [1]],
+        }
+
+    states = FullLoader(dp).get_data('states')
+    loader, dataset = DataLoader(dp).get_loader()
+
+    import cv2
+    epoch_data = []
+    for e in range(3):
+        loader_data = []
+        for i, d in enumerate(loader, 0):
+            loader_data.append(d['states'].numpy())
+            #for x in d['states']:
+            #    for s in x:
+            #        print(s.shape)
+            #        cv2.imshow("arst", s.cpu().numpy())
+            #        cv2.waitKey(33)
+        loader_data = np.concatenate(loader_data, 0)
+        epoch_data.append(loader_data)
+
+        # make sure that a random datapoint does not appear multiple times per epoch
+        datapoint = loader_data[123]
+        count = np.sum(np.all(loader_data == datapoint, axis=(1,2,3,4)))
+        assert count == 1
+
+    assert (epoch_data[0] == epoch_data[1]).all() == False
+    assert (epoch_data[0] == epoch_data[2]).all() == False
+    assert (epoch_data[1] == epoch_data[2]).all() == False
+    assert np.array_equal(np.sort(epoch_data[0], 0), np.sort(epoch_data[1], 0)) == True
+    assert np.array_equal(np.sort(epoch_data[0], 0), np.sort(epoch_data[2], 0)) == True
+    assert np.array_equal(np.sort(epoch_data[2], 0), np.sort(epoch_data[1], 0)) == True
+    dataset.memory_loader.stop()
+    while dataset.memory_loader.is_alive():
+        time.sleep(0.1)
+    assert dataset.memory_loader.is_alive() == False
+
 # Run all ILPO and VAE pre-train experiments with embeddings again
 # Run VAE experiments again
 
@@ -844,4 +985,3 @@ def test_pong():
 #   - There was a problem when multiple files were loaded both when the data fit and didnt fit in memory
 #   - Also the shuffle list was not always shuffled
 #   - It is very likely that the VAEToolbox results and LFO results for pong_visual are skewed becaus of that
-
